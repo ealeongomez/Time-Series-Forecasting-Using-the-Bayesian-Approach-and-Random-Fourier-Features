@@ -1,3 +1,5 @@
+import tensorflow as tf
+import numpy as np
 
 
 # Devuelve el código que permite inicializarlos
@@ -16,27 +18,29 @@ def _get_random_features_initializer(initializer, shape,seed):
         else:
             raise ValueError(f'Unsupported kernel initializer {initializer}')
 
-
-import tensorflow as tf
-import numpy as np
-
 class Conv1dRFF(tf.keras.layers.Layer):
 
+    # Contructor
     def __init__(self, output_dim, kernel_size=3, scale=None, padding='VALID', data_format='NWC', normalization=True, function=True,
-                 trainable_scale=False, trainable_W=False, seed=None, kernel='gaussian', **kwargs):
-        super(Conv1dRFF, self).__init__(**kwargs)
-        self.output_dim = output_dim                   # Output dimension
-        self.kernel_size = kernel_size                 # Convolutional operation size
-        self.scale = scale                             # Kernel scale
-        self.padding = padding                         # Padding type
-        self.data_format = data_format                 # Convolutional data format
-        self.normalization = normalization             # Normalization flag
-        self.function = function                       # Sine or cosine function
-        self.trainable_scale = trainable_scale         # Scale trainability
-        self.trainable_W = trainable_W                 # Kernel weights trainability
-        self.seed = seed                               # Random seed
-        self.initializer = kernel                      # Kernel initializer
+                 trainable_scale=False, trainable_W=False,
+                 seed=None, kernel='gaussian',
+                 **kwargs):
 
+        super(Conv1dRFF, self).__init__(**kwargs)
+
+        self.output_dim=output_dim                  # Output dimension
+        self.kernel_size=kernel_size                # Convolutional operation size
+        self.scale=scale                            # Kernel gaussian
+        self.padding=padding                        #
+        self.data_format=data_format                # Format of operation convolutional
+        self.normalization=normalization,           #
+        self.function=function                      # sine or cosine
+        self.trainable_scale=trainable_scale        #
+        self.trainable_W=trainable_W                #
+        self.seed=seed                              # Type of kernel
+        self.initializer=kernel
+
+    # ----------------------------------------------------------------------
     def get_config(self):
         config = super().get_config().copy()
         config.update({
@@ -47,69 +51,84 @@ class Conv1dRFF(tf.keras.layers.Layer):
             'data_format': self.data_format,
             'normalization': self.normalization,
             'function': self.function,
-            'trainable_scale': self.trainable_scale,
-            'trainable_W': self.trainable_W,
-            'seed': self.seed,
-            'initializer': self.initializer
+            'trainable': self.trainable,
+            'trainable_scale':self.trainable_scale,
+            'trainable_W':self.trainable_W,
+            'seed':self.seed
         })
         return config
 
+    # ----------------------------------------------------------------------
     def build(self, input_shape):
+
         input_dim = input_shape[-1]
+        #kernel_initializer = tf.random_normal_initializer(stddev=1.0)
 
         kernel_initializer = _get_random_features_initializer(self.initializer,
-                                                              shape=(self.kernel_size, self.kernel_size,
-                                                                     input_dim, self.output_dim),
+                                                              shape=(self.kernel_size,self.kernel_size,
+                                                              input_dim,
+                                                              self.output_dim),
                                                               seed=self.seed)
 
+        # Inicializador de los valores de la operación convolucional (kernel)
         self.kernel = self.add_weight(
             name='kernel',
-            shape=(self.kernel_size, input_dim, self.output_dim),
+            shape=(self.kernel_size, input_shape[-1], self.output_dim),
             dtype=tf.float32,
             initializer=kernel_initializer,
             trainable=self.trainable_W
         )
-
+        # Incilización de los pesos del bias
+        """
+          Pendiente de revisar la configuración del parametro initializer
+        """
         self.bias = self.add_weight(
             name='bias',
             shape=(self.output_dim,),
             dtype=tf.float32,
-            initializer=tf.random_uniform_initializer(minval=0.0, maxval=2 * np.pi, seed=self.seed),
+            initializer=tf.random_uniform_initializer(minval=0.0, maxval=2*np.pi, seed=self.seed),
             trainable=self.trainable_W
         )
-
-        # Set `scale` correctly based on the kernel type if not provided
+        # Inicializador de ancho de banda del kernel
         if not self.scale:
-            if self.initializer == 'gaussian':
-                self.scale = np.sqrt((input_dim * self.kernel_size ** 2) / 2.0)
+            if  self.initializer == 'gaussian':
+                self.scale = np.sqrt((input_dim*self.kernel_size**2)/2.0)
+                #print(self.scale)
             elif self.initializer == 'laplacian':
                 self.scale = 1.0
             else:
                 raise ValueError(f'Unsupported kernel initializer {self.initializer}')
-
-        # Initialize `kernel_scale` as a constant tensor
+        #
         self.kernel_scale = self.add_weight(
             name='kernel_scale',
             shape=(1,),
             dtype=tf.float32,
-            initializer=tf.constant_initializer(self.scale),
-            trainable=self.trainable_scale
+            initializer=tf.compat.v1.constant_initializer(self.scale),
+            trainable=self.trainable_scale,
+            constraint='NonNeg'
         )
 
+    # ----------------------------------------------------------------------
     def call(self, inputs):
-        # Ensure that `self.kernel_scale` is a tensor before dividing
-        scale = tf.math.divide(1.0, tf.cast(self.kernel_scale, tf.float32))
+
+        scale = tf.math.divide(1.0, self.kernel_scale)
         kernel = tf.math.multiply(scale, self.kernel)
 
         inputs = tf.convert_to_tensor(inputs, dtype=tf.float32)
+        inputs = tf.cast(inputs, tf.float32)
+
         outputs = tf.nn.conv1d(inputs, kernel, stride=1, padding=self.padding, data_format=self.data_format)
         outputs = tf.nn.bias_add(outputs, self.bias)
 
-        # Apply normalization and function if enabled
         if self.normalization:
-            normalization_factor = tf.math.sqrt(2 / self.output_dim)
-            outputs = normalization_factor * (tf.cos(outputs) if self.function else tf.sin(outputs))
+            if self.function:
+                outputs = tf.math.multiply(tf.math.sqrt(2/self.output_dim),tf.cos(outputs))
+            else:
+                outputs = tf.where(tf.equal(tf.math.mod(outputs, 2), 0), tf.math.multiply(tf.math.sqrt(2/self.output_dim), tf.cos(outputs)), tf.math.multiply(tf.math.sqrt(2/self.output_dim), tf.sin(outputs)))
         else:
-            outputs = tf.cos(outputs) if self.function else tf.sin(outputs)
+            if self.function:
+                outputs = tf.cos(outputs)
+            else:
+                outputs = tf.where(tf.equal(tf.math.mod(outputs, 2), 0), tf.cos(outputs), tf.math.sqrt(2/self.output_dim), tf.sin(outputs))
 
         return outputs
