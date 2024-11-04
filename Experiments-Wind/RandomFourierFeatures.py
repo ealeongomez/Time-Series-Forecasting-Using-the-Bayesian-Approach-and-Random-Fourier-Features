@@ -90,7 +90,7 @@ class Conv1dRFF(tf.keras.layers.Layer):
             trainable=self.trainable_W
         )
         # Inicializador de ancho de banda del kernel
-        if not self.scale:
+        if self.scale is None:
             if  self.initializer == 'gaussian':
                 self.scale = np.sqrt((input_dim*self.kernel_size**2)/2.0)
                 #print(self.scale)
