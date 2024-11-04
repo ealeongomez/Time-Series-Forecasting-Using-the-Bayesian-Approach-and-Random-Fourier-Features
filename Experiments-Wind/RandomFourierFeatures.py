@@ -111,7 +111,7 @@ class Conv1dRFF(tf.keras.layers.Layer):
     # ----------------------------------------------------------------------
     def call(self, inputs):
 
-        scale = tf.math.divide(1.0, self.kernel_scale)
+        scale = tf.math.divide(1.0, tf.cast(self.kernel_scale, tf.float32))
         kernel = tf.math.multiply(scale, self.kernel)
 
         inputs = tf.convert_to_tensor(inputs, dtype=tf.float32)
