@@ -105,7 +105,7 @@ class Conv1dRFF(tf.keras.layers.Layer):
             dtype=tf.float32,
             initializer=tf.compat.v1.constant_initializer(self.scale),
             trainable=self.trainable_scale,
-            constraint='NonNeg'
+            constraint=tf.keras.constraints.NonNeg()
         )
 
     # ----------------------------------------------------------------------
